@@ -37,11 +37,33 @@ commit and directory — so a report can show its own provenance.
 ## Where the template comes from
 
 A module runs from its own checkout, so "the .Rmd in the plan" is not a path
-the module can see. `--template` is resolved as: an http(s) URL; an absolute
-path; a path relative to the working directory; then that path against each
-parent directory in turn. The last rule is what makes a plan-relative
-`report.Rmd` work — omnibenchmark runs collectors from the benchmark's *output*
-directory, which sits under the plan.
+the module can see. `--template` is therefore resolved against the **benchmark
+directory** — the nearest ancestor of the working directory containing `.git`,
+since omnibenchmark runs collectors from the benchmark's *output* directory —
+and is refused if it resolves anywhere else.
 
-Pass a pinned raw URL instead when the plan and the run are not on the same
-filesystem.
+That confinement is deliberate, not defensive habit:
+
+- The rendered page is an artifact people share. A template argument free to
+  name any file on the host would quietly copy that file's contents into it.
+- A `.Rmd` is executed by knitr. An earlier version of this module accepted an
+  `http(s)` URL and the README recommended one, which made it unpinned remote
+  code execution dressed up as convenience — while every other executable thing
+  in omnibenchmark is pinned by commit sha. The URL branch is gone.
+
+Neither is a privilege boundary: whoever writes the plan already names the git
+repositories omnibenchmark clones and runs. It is about not turning a report
+into an exfiltration primitive by accident, and about a template argument
+failing loudly instead of silently rendering some other file.
+
+A template that needs to travel belongs in a **module repository**, pinned by
+commit like any other module asset — which is what
+[design 010 §3.7](https://github.com/omnibenchmark/omnibenchmark/blob/main/docs/design/010-gather.md)
+recommends. Keeping it in the plan is the trade this module supports; it is not
+the only option.
+
+## Tests
+
+```sh
+./test_render.py     # template confinement + the gather CLI contract
+```

@@ -14,11 +14,9 @@ Everything lands in DIR, which is also the render directory:
     manifest.json   {"inputs": {"<output_id>": [abs paths]}, "lineage": {...}}
     report.html     the rendered page
 
-Template resolution, in order: an http(s) URL, an absolute path, a path
-relative to the working directory, then the same path tried against each parent
-of it. The last case is the one that matters in practice -- omnibenchmark runs
-a module from the benchmark's *output* directory, so a plan-relative
-`report.Rmd` is found by walking back up to the plan.
+`--template` names a file inside the benchmark directory and nowhere else. The
+module runs from the run's *output* directory, so the path is resolved against
+the benchmark root found above it.
 """
 
 import argparse
@@ -26,7 +24,6 @@ import json
 import shutil
 import subprocess
 import sys
-import urllib.request
 from pathlib import Path
 
 
@@ -34,7 +31,8 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output_dir", required=True)
     p.add_argument("--name", required=True)
-    p.add_argument("--template", required=True, help="path or http(s) URL to a .Rmd/.qmd")
+    p.add_argument("--template", required=True,
+                   help="path to a .Rmd/.qmd, relative to the benchmark directory")
     p.add_argument("--to", default="html", help="quarto output format")
     return p.parse_known_args()
 
@@ -55,24 +53,37 @@ def gathered(unknown):
     return {k: v for k, v in groups.items() if v}
 
 
-def fetch_template(spec, dest):
-    if spec.startswith(("http://", "https://")):
-        with urllib.request.urlopen(spec) as r:
-            dest.write_bytes(r.read())
-        return spec
-    candidate = Path(spec)
-    if not candidate.is_absolute():
-        for base in [Path.cwd(), *Path.cwd().parents]:
-            if (base / spec).is_file():
-                candidate = base / spec
-                break
-    if not candidate.is_file():
+def benchmark_root(start=None):
+    """The plan's directory. `.git` marks it; without one, stop at the output
+    directory's parent rather than walking up to `/`."""
+    cwd = (start or Path.cwd()).resolve()
+    for base in [cwd, *cwd.parents]:
+        if (base / ".git").exists():
+            return base
+    return cwd.parent
+
+
+def find_template(spec, root=None):
+    """Resolve `--template` inside the benchmark directory, and refuse to leave it.
+
+    Confined on purpose. The rendered page is an artifact people share, so a
+    template argument free to name any file on the host would quietly copy that
+    file's contents into it -- and a `.Rmd` is executed by knitr, so an
+    unpinned remote one would be remote code execution recommended as
+    convenience. Templates that need to travel belong in a module repository,
+    pinned by commit like any other module asset (design 010 §3.7).
+    """
+    root = root or benchmark_root()
+    path = Path(spec)
+    path = path.resolve() if path.is_absolute() else (root / path).resolve()
+    if not path.is_relative_to(root):
         raise SystemExit(
-            f"error: template {spec!r} not found -- give an absolute path, a path "
-            f"relative to the benchmark directory, or an http(s) URL"
+            f"error: template {spec!r} resolves to {path}, outside the benchmark "
+            f"directory ({root})"
         )
-    shutil.copyfile(candidate, dest)
-    return str(candidate)
+    if not path.is_file():
+        raise SystemExit(f"error: template {spec!r} not found under {root}")
+    return path
 
 
 def main():
@@ -81,13 +92,14 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     template = out / "report.Rmd"
-    source = fetch_template(args.template, template)
+    source = find_template(args.template)
+    shutil.copyfile(source, template)
     print(f"  template: {source}")
 
     sidecar = out / "lineage.json"
     manifest = {
         "name": args.name,
-        "template": source,
+        "template": str(source),
         "inputs": gathered(unknown),
         "lineage": json.loads(sidecar.read_text()) if sidecar.is_file() else None,
     }
