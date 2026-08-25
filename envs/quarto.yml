@@ -1,0 +1,11 @@
+name: quarto
+channels:
+- conda-forge
+- nodefaults
+dependencies:
+- python >=3.10
+- quarto >=1.4
+- r-base >=4.3
+- r-jsonlite
+- r-knitr
+- r-rmarkdown

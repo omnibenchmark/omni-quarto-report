@@ -1,0 +1,7 @@
+# OmniBenchmark Module Configuration
+
+entrypoints:
+  default: render.py
+
+environments:
+  conda: envs/quarto.yml
