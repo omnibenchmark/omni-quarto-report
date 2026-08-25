@@ -21,6 +21,7 @@ the benchmark root found above it.
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,9 @@ def parse_args():
     p.add_argument("--template", required=True,
                    help="path to a .Rmd/.qmd, relative to the benchmark directory")
     p.add_argument("--to", default="html", help="quarto output format")
+    p.add_argument("--link_as",
+                   help="also symlink the rendered page here, relative to the "
+                        "run directory (e.g. reports/pca-cubes.html)")
     return p.parse_known_args()
 
 
@@ -86,6 +90,39 @@ def find_template(spec, root=None):
     return path
 
 
+def link_report(target, spec):
+    """Point a short, stable path at the rendered page.
+
+    Relative and confined to the run directory, like `--template`: the module
+    is writing outside its own node here, and the run it belongs to is the only
+    place that is safe. The symlink itself is relative so the output tree stays
+    movable.
+
+    The link is a convenience pointer, not a declared output -- snakemake does
+    not track it. One `--link_as` value means one link: on a *grouped* gather
+    every node would write the same path and the last would win, and it cannot
+    be templated per group, since omnibenchmark substitutes `{...}` in output
+    paths but not in parameter values. Give each group its own value, or leave
+    `--link_as` to the global (collector) form it was written for.
+    """
+    link = Path(spec)
+    if link.is_absolute() or ".." in link.parts:
+        raise SystemExit(
+            f"error: --link_as must be a relative path inside the run "
+            f"directory, got {spec!r}"
+        )
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        link.unlink()
+    elif link.exists():
+        raise SystemExit(
+            f"error: --link_as {spec!r} exists and is not a symlink; refusing "
+            f"to replace it"
+        )
+    link.symlink_to(os.path.relpath(target, link.parent.resolve()))
+    return link
+
+
 def main():
     args, unknown = parse_args()
     out = Path(args.output_dir).resolve()
@@ -112,6 +149,10 @@ def main():
     result = subprocess.run(cmd, cwd=out)
     if result.returncode != 0:
         sys.exit(result.returncode)
+
+    if args.link_as:
+        link = link_report(out / f"report.{args.to}", args.link_as)
+        print(f"  linked: {link} -> {os.readlink(link)}")
 
 
 if __name__ == "__main__":

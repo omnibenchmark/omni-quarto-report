@@ -30,6 +30,20 @@ the render directory:
 | `manifest.json` | `{"inputs": {"<output_id>": [absolute paths]}, "lineage": {…}}` |
 | `report.html` | what quarto produced |
 
+`--link_as reports/foo.html` additionally points a short, stable path at the
+rendered page, so a run has one place to open that carries no parameter hash.
+The link is relative (`../report/REPORT/quarto/.<hash>/report.html`), so the
+output tree stays movable; it is confined to the run directory like
+`--template`, replaces its own link on a re-run, and refuses to overwrite a
+path that is not already a symlink.
+
+Two things it is not. It is not a declared output, so snakemake does not track
+or clean it. And it is one path per value: on a *grouped* gather every node
+would write the same link and the last would win — omnibenchmark substitutes
+`{...}` in output paths but not in parameter values, so it cannot be templated
+per group. Use it on the global (collector) form, or give each group its own
+value.
+
 The template reads `manifest.json` from its own working directory. `lineage` is
 the engine's gather sidecar — every contributing node with its stage, module,
 commit and directory — so a report can show its own provenance.
