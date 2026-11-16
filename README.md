@@ -44,6 +44,20 @@ would write the same link and the last would win — omnibenchmark substitutes
 per group. Use it on the global (collector) form, or give each group its own
 value.
 
+## api 0.8.0
+
+On a 0.8.0 plan the module is called with `--from-files <lineage.json>` and one
+`--output id=PATH`, and runs from its own checkout:
+
+- `manifest.json` keeps its shape. `inputs` is built from the members' `files`,
+  and `lineage` is the whole gather manifest (lineage.json, version 2).
+- The page is written to the declared output path; the stage declares exactly
+  one output.
+- `--template` is resolved against the benchmark directory found above that
+  output path.
+- `--link_as` is refused. Name the directory in the plan instead:
+  `gather: {from: sens_json, path: reports}`.
+
 The template reads `manifest.json` from its own working directory. `lineage` is
 the engine's gather sidecar — every contributing node with its stage, module,
 commit and directory — so a report can show its own provenance.

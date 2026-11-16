@@ -5,7 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from render import benchmark_root, find_template, gathered, link_report
+from render import benchmark_root, find_template, from_manifest, gathered, link_report
 
 
 def main():
@@ -79,6 +79,11 @@ def main():
         "sens_json": ["/a.json", "/b.json"],
         "other": ["/c"],
     }
+    # api 0.8.0: the same shape, read from the manifest (lineage.json v2)
+    assert from_manifest({"members": [
+        {"files": {"sens_json": "/a.json", "other": "/c"}},
+        {"files": {"sens_json": "/b.json"}},
+    ]}) == {"sens_json": ["/a.json", "/b.json"], "other": ["/c"]}
     print("ok")
 
 

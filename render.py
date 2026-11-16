@@ -5,8 +5,10 @@ A generic terminal collector: it knows nothing about the benchmark. The
 template comes from the *plan* as a parameter, the data comes from the gather,
 and the two meet through a manifest the template reads:
 
+    ./render.py --template report.Rmd \
+        --from-files lineage.json --output report_html=DIR/report.html   # api 0.8.0
     ./render.py --output_dir DIR --name ID --template report.Rmd \
-        --<output_id> a.json b.json ...
+        --<output_id> a.json b.json ...                                  # api 0.7.0
 
 Everything lands in DIR, which is also the render directory:
 
@@ -14,9 +16,10 @@ Everything lands in DIR, which is also the render directory:
     manifest.json   {"inputs": {"<output_id>": [abs paths]}, "lineage": {...}}
     report.html     the rendered page
 
-`--template` names a file inside the benchmark directory and nowhere else. The
-module runs from the run's *output* directory, so the path is resolved against
-the benchmark root found above it.
+`--template` names a file inside the benchmark directory and nowhere else. It
+is resolved against the benchmark root found above the node's output directory
+(api 0.8.0, where the module runs from its own checkout) or above the working
+directory (api 0.7.0, where it runs from the run's output directory).
 """
 
 import argparse
@@ -30,8 +33,11 @@ from pathlib import Path
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--output_dir", required=True)
-    p.add_argument("--name", required=True)
+    p.add_argument("--output_dir", help="api 0.7.0; ignored with --from-files")
+    p.add_argument("--name")
+    p.add_argument("--from-files", help="api 0.8.0: the gather manifest (lineage.json v2)")
+    p.add_argument("--output", action="append", default=[],
+                   help="api 0.8.0: id=PATH of the rendered page; exactly one")
     p.add_argument("--template", required=True,
                    help="path to a .Rmd/.qmd, relative to the benchmark directory")
     p.add_argument("--to", default="html", help="quarto output format")
@@ -55,6 +61,15 @@ def gathered(unknown):
         elif current is not None:
             groups[current].append(str(Path(token).resolve()))
     return {k: v for k, v in groups.items() if v}
+
+
+def from_manifest(manifest):
+    """lineage.json v2 -> {id: [paths]}, the shape `gathered` returns."""
+    groups = {}
+    for member in manifest["members"]:
+        for oid, path in member["files"].items():
+            groups.setdefault(oid, []).append(path)
+    return groups
 
 
 def benchmark_root(start=None):
@@ -125,20 +140,40 @@ def link_report(target, spec):
 
 def main():
     args, unknown = parse_args()
-    out = Path(args.output_dir).resolve()
+    target = None
+    if args.from_files:  # api 0.8.0
+        if len(args.output) != 1:
+            raise SystemExit("error: the stage must declare exactly one output")
+        if args.link_as:
+            raise SystemExit(
+                "error: --link_as is for api 0.7.0; on 0.8.0 name the directory "
+                "in the plan instead: gather: {from: ..., path: reports}"
+            )
+        target = Path(args.output[0].split("=", 1)[1]).resolve()
+        out = target.parent
+        lineage = json.loads(Path(args.from_files).read_text())
+        inputs = from_manifest(lineage)
+        root = benchmark_root(out)
+    else:
+        if not args.output_dir:
+            raise SystemExit("error: --from-files or --output_dir is required")
+        out = Path(args.output_dir).resolve()
+        sidecar = out / "lineage.json"
+        lineage = json.loads(sidecar.read_text()) if sidecar.is_file() else None
+        inputs = gathered(unknown)
+        root = None
     out.mkdir(parents=True, exist_ok=True)
 
     template = out / "report.Rmd"
-    source = find_template(args.template)
+    source = find_template(args.template, root)
     shutil.copyfile(source, template)
     print(f"  template: {source}")
 
-    sidecar = out / "lineage.json"
     manifest = {
         "name": args.name,
         "template": str(source),
-        "inputs": gathered(unknown),
-        "lineage": json.loads(sidecar.read_text()) if sidecar.is_file() else None,
+        "inputs": inputs,
+        "lineage": lineage,
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     for oid, paths in manifest["inputs"].items():
@@ -149,6 +184,8 @@ def main():
     result = subprocess.run(cmd, cwd=out)
     if result.returncode != 0:
         sys.exit(result.returncode)
+    if target and target.name != f"report.{args.to}":
+        (out / f"report.{args.to}").replace(target)
 
     if args.link_as:
         link = link_report(out / f"report.{args.to}", args.link_as)
