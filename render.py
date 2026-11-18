@@ -34,8 +34,9 @@ from pathlib import Path
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--output_dir", required=True)
-    p.add_argument("--name", required=True)
+    p.add_argument("--output_dir",
+                   help="the node's directory; default: where --output points")
+    p.add_argument("--name")
     p.add_argument("--template", required=True,
                    help="path to a .Rmd/.qmd, relative to the benchmark directory")
     p.add_argument("--to", default="html", help="quarto output format")
@@ -156,7 +157,13 @@ def link_report(target, spec, base=None):
 
 def main():
     args, unknown = parse_args()
-    out = Path(args.output_dir).resolve()
+    # ob passes --output_dir until api 0.10; after that --output names the place.
+    if args.output_dir:
+        out = Path(args.output_dir).resolve()
+    elif args.output:
+        out = Path(args.output[0].split("=", 1)[1]).resolve().parent
+    else:
+        raise SystemExit("error: --output_dir or --output is required")
     out.mkdir(parents=True, exist_ok=True)
 
     template = out / "report.Rmd"
