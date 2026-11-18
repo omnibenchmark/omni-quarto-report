@@ -5,7 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from render import benchmark_root, find_template, gathered, link_report
+from render import benchmark_root, find_template, from_manifest, gathered, link_report, run_dir
 
 
 def main():
@@ -79,6 +79,24 @@ def main():
         "sens_json": ["/a.json", "/b.json"],
         "other": ["/c"],
     }
+    # `--from-files lineage.json`, the gather contract from api 0.8.0
+    record = {"version": 2, "members": [
+        {"files": {"scores": "/a.txt", "table": "/a.tsv"}, "lineage": []},
+        {"files": {"scores": "/b.txt"}, "lineage": []},
+    ]}
+    assert from_manifest(record) == {"scores": ["/a.txt", "/b.txt"], "table": ["/a.tsv"]}
+
+    # without .git, the benchmark is the directory holding the run directory,
+    # whatever directory the module is started from
+    with tempfile.TemporaryDirectory() as tmp:
+        plan = Path(tmp).resolve() / "plan"
+        node = plan / "out" / "report.quarto-abc123"
+        node.mkdir(parents=True)
+        (plan / "out" / "Snakefile").write_text("")
+        assert run_dir(node) == plan / "out", run_dir(node)
+        assert benchmark_root(node) == plan, benchmark_root(node)
+        link = link_report(node / "report.html", "reports/r.html", run_dir(node))
+        assert link == plan / "out" / "reports" / "r.html", link
     print("ok")
 
 

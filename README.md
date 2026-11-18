@@ -1,15 +1,14 @@
 # omni-quarto-report
 
-A terminal **gather** collector (omnibenchmark api ≥ 0.7.0) that renders a
+A terminal **gather** collector (omnibenchmark api ≥ 0.7.0, 0.8.0 included) that renders a
 Quarto/Rmd template over whatever the gather collected. It knows nothing about
 any particular benchmark: the template comes from the plan as a parameter, the
 data comes from the gather, and the two meet through a manifest.
 
 ```yaml
   - id: REPORT
-    prefix: report
     gather:
-      - from: sens_json          # no group_by: every producer, one node
+      from: sens_json            # no group_by: every producer, one node
     modules:
       - id: quarto
         software_environment: quarto
@@ -20,6 +19,14 @@ data comes from the gather, and the two meet through a manifest.
       - id: report_html
         path: report.html
 ```
+
+On api 0.7.0 the stage also needs `prefix: report`, and the gather is written
+as a list (`gather: [{from: sens_json}]`).
+
+The module follows the gather contract of the plan's api version. From 0.8.0
+it reads the members from `--from-files <lineage.json>` and writes the page to
+the path given by `--output`; on 0.7.0 it takes them as `--<output_id> p1 p2 …`.
+The template sees the same `manifest.json` either way.
 
 The module writes three files into the node's output directory, which is also
 the render directory:
@@ -32,7 +39,7 @@ the render directory:
 
 `--link_as reports/foo.html` additionally points a short, stable path at the
 rendered page, so a run has one place to open that carries no parameter hash.
-The link is relative (`../report/REPORT/quarto/.<hash>/report.html`), so the
+The link is relative (`../REPORT.quarto.<hash>/report.html`), so the
 output tree stays movable; it is confined to the run directory like
 `--template`, replaces its own link on a re-run, and refuses to overwrite a
 path that is not already a symlink.
@@ -45,16 +52,17 @@ per group. Use it on the global (collector) form, or give each group its own
 value.
 
 The template reads `manifest.json` from its own working directory. `lineage` is
-the engine's gather sidecar — every contributing node with its stage, module,
-commit and directory — so a report can show its own provenance.
+the engine's `lineage.json` for the gather: every contributing node with its
+commit and directory and, from api 0.8.0, its files and the stage, module and
+parameter values of each of its ancestors. A report can label results and show
+its own provenance from it.
 
 ## Where the template comes from
 
 A module runs from its own checkout, so "the .Rmd in the plan" is not a path
 the module can see. `--template` is therefore resolved against the **benchmark
-directory** — the nearest ancestor of the working directory containing `.git`,
-since omnibenchmark runs collectors from the benchmark's *output* directory —
-and is refused if it resolves anywhere else.
+directory** — the nearest ancestor of the node's output directory containing
+`.git` — and is refused if it resolves anywhere else.
 
 That confinement is deliberate, not defensive habit:
 

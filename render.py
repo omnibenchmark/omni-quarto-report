@@ -5,6 +5,11 @@ A generic terminal collector: it knows nothing about the benchmark. The
 template comes from the *plan* as a parameter, the data comes from the gather,
 and the two meet through a manifest the template reads:
 
+    # omnibenchmark api >= 0.8.0
+    ./render.py --output_dir DIR --name ID --template report.Rmd \
+        --output report_html=DIR/report.html --from-files DIR/lineage.json
+
+    # api 0.7.0
     ./render.py --output_dir DIR --name ID --template report.Rmd \
         --<output_id> a.json b.json ...
 
@@ -14,9 +19,8 @@ Everything lands in DIR, which is also the render directory:
     manifest.json   {"inputs": {"<output_id>": [abs paths]}, "lineage": {...}}
     report.html     the rendered page
 
-`--template` names a file inside the benchmark directory and nowhere else. The
-module runs from the run's *output* directory, so the path is resolved against
-the benchmark root found above it.
+`--template` names a file inside the benchmark directory and nowhere else: the
+path is resolved against the benchmark root found above DIR.
 """
 
 import argparse
@@ -38,7 +42,31 @@ def parse_args():
     p.add_argument("--link_as",
                    help="also symlink the rendered page here, relative to the "
                         "run directory (e.g. reports/pca-cubes.html)")
+    p.add_argument("--from-files", dest="from_files",
+                   help="api >= 0.8.0: the gather manifest (lineage.json) "
+                        "listing every member's files and lineage")
+    p.add_argument("--output", action="append", default=[],
+                   help="api >= 0.8.0: id=PATH the rendered page must be written to")
     return p.parse_known_args()
+
+
+def from_manifest(record):
+    """A gather manifest (lineage.json v2) -> {output id: [paths]}, the shape
+    `gathered` returns for the api 0.7.0 command line."""
+    groups = {}
+    for member in record["members"]:
+        for output_id, path in member["files"].items():
+            groups.setdefault(output_id, []).append(path)
+    return groups
+
+
+def run_dir(start):
+    """The run's output directory: the ancestor holding the Snakefile."""
+    start = Path(start).resolve()
+    for base in [start, *start.parents]:
+        if (base / "Snakefile").is_file():
+            return base
+    return Path.cwd().resolve()
 
 
 def gathered(unknown):
@@ -58,13 +86,15 @@ def gathered(unknown):
 
 
 def benchmark_root(start=None):
-    """The plan's directory. `.git` marks it; without one, stop at the output
-    directory's parent rather than walking up to `/`."""
-    cwd = (start or Path.cwd()).resolve()
-    for base in [cwd, *cwd.parents]:
+    """The plan's directory, searched upwards from the node's output directory
+    (the module's working directory differs between api versions). `.git`
+    marks it; without one, stop at the run directory's parent rather than
+    walking up to `/`."""
+    start = (start or Path.cwd()).resolve()
+    for base in [start, *start.parents]:
         if (base / ".git").exists():
             return base
-    return cwd.parent
+    return run_dir(start).parent
 
 
 def find_template(spec, root=None):
@@ -90,7 +120,7 @@ def find_template(spec, root=None):
     return path
 
 
-def link_report(target, spec):
+def link_report(target, spec, base=None):
     """Point a short, stable path at the rendered page.
 
     Relative and confined to the run directory, like `--template`: the module
@@ -111,6 +141,7 @@ def link_report(target, spec):
             f"error: --link_as must be a relative path inside the run "
             f"directory, got {spec!r}"
         )
+    link = Path(base or Path.cwd()) / link
     link.parent.mkdir(parents=True, exist_ok=True)
     if link.is_symlink():
         link.unlink()
@@ -129,16 +160,22 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     template = out / "report.Rmd"
-    source = find_template(args.template)
+    source = find_template(args.template, benchmark_root(out))
     shutil.copyfile(source, template)
     print(f"  template: {source}")
 
-    sidecar = out / "lineage.json"
+    if args.from_files:  # api >= 0.8.0
+        lineage = json.loads(Path(args.from_files).read_text())
+        inputs = from_manifest(lineage)
+    else:  # api 0.7.0: members on the command line, lineage in a sidecar
+        sidecar = out / "lineage.json"
+        lineage = json.loads(sidecar.read_text()) if sidecar.is_file() else None
+        inputs = gathered(unknown)
     manifest = {
         "name": args.name,
         "template": str(source),
-        "inputs": gathered(unknown),
-        "lineage": json.loads(sidecar.read_text()) if sidecar.is_file() else None,
+        "inputs": inputs,
+        "lineage": lineage,
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     for oid, paths in manifest["inputs"].items():
@@ -150,8 +187,17 @@ def main():
     if result.returncode != 0:
         sys.exit(result.returncode)
 
+    # api >= 0.8.0 names the file to write; quarto wrote report.<to> in DIR.
+    rendered = out / f"report.{args.to}"
+    if args.output:
+        declared = Path(args.output[0].split("=", 1)[1])
+        if declared.resolve() != rendered:
+            declared.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(rendered, declared)
+            rendered = declared.resolve()
+
     if args.link_as:
-        link = link_report(out / f"report.{args.to}", args.link_as)
+        link = link_report(rendered, args.link_as, run_dir(out))
         print(f"  linked: {link} -> {os.readlink(link)}")
 
 
